@@ -3,8 +3,8 @@ TOUCHaDESKTOP 0.2.9-beta — install
 
 You need: a Linux PC (Wayland) + the TOUCHa app from the Meta Horizon
 Store on your Quest. This download is the Linux host side only.
-The control GUI (dark grey, autumn buttons) shows its version in the
-title bar and next to the status.
+The control GUI (dark grey, autumn buttons) shows its version in the title bar
+and next to the status.
 
 1. Verify the download (public key included):
   gpg --import toucha-release.gpg
@@ -13,14 +13,14 @@ title bar and next to the status.
 All files must report OK / good signature. Key fingerprint:
   DB7A 3F89 6919 DA51 825F 3C59 715A 9113 AF69 D487
 
- 2. Install:
+2. Install:
    ./install.sh
 This adds TOUCHaDESKTOP to the start menu. No sudo needed.
 To remove it again: ./install.sh --uninstall
 Note: the GUI ships compiled (toucha_gui.pyc) and needs Python 3.14+
 plus PyQt6; install.sh checks both and points at the Flatpak otherwise.
 
- 3. Start: open TOUCHaDESKTOP from the start menu and press Start.
+3. Start: open TOUCHaDESKTOP from the start menu and press Start.
 No terminal, no flags needed. A splash screen appears for 3 seconds,
 then the control GUI opens. The streamer log lives in its own Log tab;
 the exact start command is shown under Advanced → Command.
@@ -50,8 +50,8 @@ streamer log in the GUI, then tap Trust ONCE.
 
 0.2.9 changes: control GUI starts the streamer automatically (Autostart
 checkbox, on by default); Advanced command wraps instead of widening the
-window; window freely resizable; Quest audio routing follows headset
-presence (AUDIO 0/1); relative-mouse anchor reset (no more cursor jumps).
+window; window freely resizable; Quest audio routing follows headset presence
+(AUDIO 0/1); relative-mouse anchor reset (no more cursor jumps).
 
 0.2.8 changes: Flatpak audio fixed (host sound streams again without a
 system Opus library); Quest host list documented above.
@@ -81,3 +81,43 @@ How to use:
 Beta limits (honest): video only, no host audio yet; touch gestures
 only; screen-capture consent is asked on every start; RTCP feedback
 does not cross NAT setups (keyframe every 2 s covers it).
+
+Licensing and commercial distribution
+======================================
+
+TOUCHa includes or is derived in part from code from MetaShare:
+
+  https://github.com/makemake-kbo/metashare
+
+MetaShare is distributed under the MIT License, including the copyright
+notice for makemake. The original MIT licence text and attribution must be
+kept with every distribution containing MetaShare-derived code. The MIT
+License permits commercial use, modification, and sale, subject to its
+conditions.
+
+TOUCHa's original code, branding, artwork, release configuration, and other
+original materials may be distributed under a separate TOUCHa commercial
+licence. That licence does not remove or restrict the rights granted by the
+MIT License or any other third-party licence. Third-party components remain
+under their respective licences and may require additional notices, source
+code, or relinking information.
+
+Experimental v1.2.0
+-------------------
+
+The v1.2.0 experimental release is not a final commercial-licence clearance.
+It must not be advertised as containing only proprietary TOUCHa code until the
+complete source and binary dependency inventory has been reviewed. In
+particular, verify the exact licensing and build configuration for FFmpeg,
+Opus, Qt/PyQt6, PipeWire, GTK/gtkmm, SDL2, Android/Gradle components, and
+all other bundled or dynamically linked dependencies before selling or
+redistributing v1.2.0.
+
+Until that review is complete, v1.2.0 is provided for testing and evaluation.
+Every v1.2.0 package must retain the MetaShare MIT attribution and all
+applicable third-party notices. Do not apply a blanket "all rights reserved"
+notice to MetaShare-derived or other third-party code.
+
+This README is a project notice, not legal advice. Obtain a final review from
+a lawyer experienced in software and open-source licensing before commercial
+release.
