@@ -107,6 +107,16 @@ Nützliche Zusatzflags (alle mit --help ausführlich beschrieben):
 
 Was in dieser Version geändert wurde
 ===================================
+Bilder
+  * Der Connect-Screen bekommt wieder sein Bild. Zwei Ursachen: der Host
+    stellte START erst NACH dem Screenshot-Vorgang zu, und das Wecken der
+    Aufnahme dauert bis zu 2,5 s — der Viewer wartete in dieser Zeit auf
+    START, lief in sein Socket-Timeout und hat die Sitzung weggeworfen. START
+    geht jetzt sofort raus, das Bild wird danach angefordert.
+  * Eine Bildanfrage geht nicht mehr verloren, wenn der Versand einmal nicht
+    klappt: der Connect-Screen fragt genau einmal, ein verworfener Wunsch
+    blieb fuer immer eine leere Karte.
+
 Mehrere Viewer
   * Mehrere Geräte sehen denselben Monitor gleichzeitig. Bild und Ton
     bleiben EIN Strom mit EINEM SRTP-Schlüssel je Kopplung — nur die
