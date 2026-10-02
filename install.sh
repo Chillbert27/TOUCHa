@@ -1,78 +1,500 @@
-#!/bin/sh
-# TOUCHaDESKTOP installer — double-click friendly, no flags needed.
-# Installs into ~/.local (no sudo) and adds a start-menu entry that
-# opens only the control GUI (no terminal).
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Chillbert27 (TrawallyVR)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# TOUCHa streamer installer — companion to the GitHub release set
+# (also runs from a git-tree checkout: GUI as .pyc there, no source).
+# Installs the Linux host side (streamer + GUI).
+# System packages are installed ONLY with explicit consent (Variante A,
+# default-aus): pass --yes, or answer the [j/N] prompt. Without consent
+# (or without a TTY) missing items are reported with the exact commands.
 #
 # Usage:
-#   ./install.sh            install / update
-#   ./install.sh --uninstall  remove again
-set -eu
+#   ./install.sh [--native|--flatpak] [--verify-only] [--launch] [--uninstall]
+#                [--yes] [--no-sysdeps]
+#
+#   --native       install the native binary to ~/.local/share/TOUCHaDESKTOP
+#                  plus symlinks in ~/.local/bin, the control GUI and a
+#                  start-menu entry. Default. The set is self-contained:
+#                  bundled libs under lib/ (RUNPATH $ORIGIN/lib) — only
+#                  stock system libs/services remain (see below).
+#   --flatpak      install the Flatpak bundle for the current user.
+#                  Multi-distro, includes the GUI.
+#   --verify-only  only verify signatures/checksums (+ bundled lib/ set),
+#                  install nothing.
+#   --launch       start the GUI after install.
+#   --uninstall    remove a previous native install: data dir, symlinks,
+#                  generated launcher, desktop entry, icon and licences
+#                  (all under ~/.local). Only our own symlinks/scripts are
+#                  deleted, never a foreign file in the way. An installed
+#                  user Flatpak is only reported, not removed — do that
+#                  with: flatpak uninstall --user com.toucha.Streamer
+#                  Run this before installing a new release.
+#   --yes          install missing system packages without asking
+#                  (needs sudo unless root; for scripts).
+#   --no-sysdeps   never touch the package manager: only report what is
+#                  missing and exit non-zero.
+#   -h, --help     this help.
+#
+# Verification first, always: GPG (when SHA256SUMS.asc ships in the set,
+# else the shipped toucha-release.gpg is imported for the check — compare
+# its fingerprint with INSTALL.txt) plus sha256sum -c. Any failure aborts
+# before anything is installed.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-SRC_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-DEST_DIR="$HOME/.local/share/TOUCHaDESKTOP"
-DESKTOP_FILE="$HOME/.local/share/applications/TOUCHa.desktop"
-
-uninstall() {
-  rm -f "$DESKTOP_FILE"
-  rm -rf "$DEST_DIR"
-  if command -v update-desktop-database >/dev/null 2>&1; then
-    update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
-  fi
-  echo "TOUCHaDESKTOP removed."
-}
-
-if [ "${1:-}" = "--uninstall" ]; then
-  uninstall
-  exit 0
+MODE="native"
+VERIFY_ONLY=0
+LAUNCH=0
+UNINSTALL=0
+SYSDEPS_YES=0
+SYSDEPS_OFF=0
+for a in "$@"; do
+    case "$a" in
+        --flatpak) MODE="flatpak" ;;
+        --native) MODE="native" ;;
+        --verify-only) VERIFY_ONLY=1 ;;
+        --launch) LAUNCH=1 ;;
+        --uninstall) UNINSTALL=1 ;;
+        --yes) SYSDEPS_YES=1 ;;
+        --no-sysdeps) SYSDEPS_OFF=1 ;;
+        -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+        *) echo "unknown arg: $a (see --help)" >&2; exit 2 ;;
+    esac
+done
+if [[ "$SYSDEPS_YES" == "1" && "$SYSDEPS_OFF" == "1" ]]; then
+    echo "conflicting args: --yes and --no-sysdeps" >&2; exit 2
 fi
-if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  echo "Usage: ./install.sh [--uninstall]"
-  exit 0
+
+cd "$HERE"
+fail() { echo "INSTALL FAILED: $*" >&2; exit 1; }
+
+# --- 0. uninstall (runs before verification: it only removes files) -------
+if [[ "$UNINSTALL" == "1" ]]; then
+    D="$HOME/.local/share/TOUCHaDESKTOP"
+    B="$HOME/.local/bin"
+    removed=0
+    # Stop a running instance first — otherwise the deleted binary keeps
+    # running from memory and its uinput device stays claimed.
+    for p in toucha-streamer toucha-host TOUCHaDESKTOP; do
+        pid="$(ps -eo pid=,comm= 2>/dev/null | awk -v n="$p" '$2==n {print $1}')" || true
+        for x in $pid; do
+            echo "stopping running $p (pid $x)"
+            kill "$x" 2>/dev/null || true
+        done
+    done
+    # Whole data dir: binaries, lib/, GUI, icon and licences/ — created
+    # and owned by this installer, nothing else ever lands there.
+    if [[ -d "$D" ]]; then
+        rm -rf "$D"
+        echo "removed: $D"
+        removed=$((removed + 1))
+    fi
+    # Symlinks into the data dir only. A real file here is not ours —
+    # never delete it.
+    for n in toucha-streamer toucha-host TOUCHaDESKTOP; do
+        p="$B/$n"
+        if [[ -L "$p" && "$(readlink "$p")" == *TOUCHaDESKTOP* ]]; then
+            rm -f "$p"; echo "removed: $p (symlink)"; removed=$((removed + 1))
+        elif [[ -e "$p" ]]; then
+            echo "KEPT: $p is a real file, not our symlink"
+        fi
+    done
+    # Generated launcher script — identify by its own marker line.
+    p="$B/toucha-gui"
+    if [[ -f "$p" ]] && grep -q "generated by install.sh" "$p" 2>/dev/null; then
+        rm -f "$p"; echo "removed: $p"; removed=$((removed + 1))
+    elif [[ -e "$p" ]]; then
+        echo "KEPT: $p is not the generated launcher"
+    fi
+    for p in "$HOME/.local/share/applications/com.toucha.Streamer.desktop" \
+             "$HOME/.local/share/icons/hicolor/256x256/apps/com.toucha.Streamer.png"; do
+        if [[ -e "$p" ]]; then
+            rm -f "$p"; echo "removed: $p"; removed=$((removed + 1))
+        fi
+    done
+    # User Flatpak. Refuse without --yes: it drops a whole runtime.
+    if flatpak info com.toucha.Streamer >/dev/null 2>&1; then
+        if [[ "${1:-}" == "--uninstall-flatpak" || "${FLATPAK_REMOVE:-0}" == "1" ]]; then
+            flatpak uninstall -y --user com.toucha.Streamer >/dev/null 2>&1 \
+                || flatpak uninstall -y com.toucha.Streamer >/dev/null 2>&1 || true
+            echo "removed: Flatpak com.toucha.Streamer"
+        else
+            echo "SKIPPED: Flatpak com.toucha.Streamer is still installed."
+            echo "          Remove it with: flatpak uninstall --user com.toucha.Streamer"
+        fi
+    fi
+    echo "uninstall done ($removed native item(s) removed)."
+    exit 0
 fi
 
-for f in TOUCHaDESKTOP toucha_gui.pyc toucha_icon.png "TOUCHa.desktop"; do
-  if [ ! -f "$SRC_DIR/$f" ]; then
-    echo "Missing $f next to install.sh — run from the extracted release folder." >&2
-    exit 1
-  fi
+for f in SHA256SUMS.txt toucha-release.gpg; do
+    [[ -f "$f" ]] || fail "missing $f — run from the full release set"
 done
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is required but was not found. Please install Python 3 first." >&2
-  exit 1
+# --- 1. verify -------------------------------------------------------------
+if ! gpg --list-keys "TOUCHa Releases" >/dev/null 2>&1; then
+    echo "importing release key (fingerprint must match INSTALL.txt) ..."
+    gpg --import toucha-release.gpg || fail "key import"
 fi
-if ! python3 -c "import PyQt6" 2>/dev/null; then
-  echo "Python package PyQt6 is required for the GUI but was not found." >&2
-  echo "Install it with your package manager, e.g.:" >&2
-  echo "  Fedora: sudo dnf install python3-pyqt6" >&2
-  echo "  Ubuntu/Debian: sudo apt install python3-pyqt6" >&2
-  exit 1
+gpg --list-keys "TOUCHa Releases" 2>/dev/null | tr -d ' \n' | grep -q "DB7A3F896919DA51825F3C59715A9113AF69D487" \
+    || fail "unexpected release key fingerprint (see INSTALL.txt)"
+if [[ -f SHA256SUMS.asc ]]; then
+    if gpg --verify SHA256SUMS.asc SHA256SUMS.txt 2>/dev/null; then
+        echo "gpg: SHA256SUMS.txt signature OK (detached)"
+    else
+        # SHA256SUMS.asc ships clearsigned (BEGIN PGP SIGNED MESSAGE),
+        # which needs the single-arg form — then ensure the signed
+        # payload is exactly the SHA256SUMS.txt we checksum against.
+        gpg --verify SHA256SUMS.asc 2>/dev/null \
+            || fail "SHA256SUMS.asc: bad signature"
+        tmp_verified="$(mktemp)"
+        gpg --yes --decrypt --output "$tmp_verified" SHA256SUMS.asc 2>/dev/null \
+            || { rm -f "$tmp_verified"; fail "SHA256SUMS.asc: decrypt failed"; }
+        cmp -s "$tmp_verified" SHA256SUMS.txt \
+            || { rm -f "$tmp_verified"; fail "SHA256SUMS.asc payload differs from SHA256SUMS.txt"; }
+        rm -f "$tmp_verified"
+        echo "gpg: SHA256SUMS.txt signature OK"
+    fi
+else
+    echo "note: no SHA256SUMS.asc in this set — checksum check only"
 fi
-# The GUI ships compiled (toucha_gui.pyc): needs the matching interpreter.
-if ! python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 14) else 1)" 2>/dev/null; then
-  echo "Python 3.14+ is required for the GUI (older Pythons cannot run it)." >&2
-  echo "Alternatively use the Flatpak (bundles everything):" >&2
-  echo "  flatpak --user install ./com.toucha.Streamer.flatpak" >&2
-  exit 1
+sha256sum -c SHA256SUMS.txt || fail "checksum mismatch"
+echo "verify: all OK"
+
+# Bundled runtime libs for RUNPATH $ORIGIN/lib (ffmpeg set, x264, sdbus-c++,
+# plus pipewire/ei/xkbcommon — deliberately WITHOUT opus/av1: default audio
+# is PCM, default video HEVC/H.264; libopus.so.0 remains a system remainder
+# below because the binary still carries the legacy NEEDED entry).
+BUNDLED_LIBS="libavcodec.so.61 libavutil.so.59 libswscale.so.8
+    libswresample.so.5 libx264.so.165 libsdbus-c++.so.1
+    libpipewire-0.3.so.0 libei.so.1 libxkbcommon.so.0"
+if [[ "$MODE" == "native" ]]; then
+    [[ -d lib ]] || fail "bundled lib/ missing in this set"
+    # shellcheck disable=SC2086
+    for _lib in $BUNDLED_LIBS; do
+        [[ -f "lib/$_lib" ]] || fail "bundled lib missing: lib/$_lib"
+    done
+    echo "bundled libs: OK ($(echo $BUNDLED_LIBS | wc -w) files, no opus/av1)"
 fi
 
-mkdir -p "$DEST_DIR"
-cp -f "$SRC_DIR/TOUCHaDESKTOP" "$DEST_DIR/TOUCHaDESKTOP"
-cp -f "$SRC_DIR/toucha_gui.pyc" "$DEST_DIR/toucha_gui.pyc"
-cp -f "$SRC_DIR/toucha_icon.png" "$DEST_DIR/toucha_icon.png"
-chmod +x "$DEST_DIR/TOUCHaDESKTOP"
+[[ "$VERIFY_ONLY" == "1" ]] && exit 0
 
-mkdir -p "$HOME/.local/share/applications"
-# The shipped template uses %INSTALL_DIR% as placeholder for the real path
-# (desktop files require absolute paths).
-sed "s|%INSTALL_DIR%|$DEST_DIR|g" "$SRC_DIR/TOUCHa.desktop" > "$DESKTOP_FILE"
-chmod +x "$DESKTOP_FILE"
-if command -v desktop-file-validate >/dev/null 2>&1; then
-  desktop-file-validate "$DESKTOP_FILE" || echo "Warning: desktop file validation reported an issue." >&2
-fi
-if command -v update-desktop-database >/dev/null 2>&1; then
-  update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
+# --- 1b. system dependencies (Variante A: default-aus) ----------------------
+# Loader remainder not bundled: libopus.so.0 (legacy NEEDED entry).
+# Service remainder that cannot be bundled: PipeWire daemon + portal.
+# GUI remainder: PyQt6. Missing items are installed via the distro package
+# manager ONLY with explicit consent (--yes or interactive [j/N]).
+sysdep_family() {
+    local id_like=""
+    if [[ -f /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        id_like="${ID_LIKE:-$ID}"
+    fi
+    case "$id_like" in
+        *fedora*|*rhel*|*centos*) echo "fedora" ;;
+        *debian*|*ubuntu*) echo "debian" ;;
+        *arch*) echo "arch" ;;
+        *suse*|*opensuse*) echo "suse" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+sysdep_pkgs() {
+    # $1 = item (opus|pipewire|pyqt6|flatpak), $2 = family -> package(s)
+    case "$2/$1" in
+        fedora/opus) echo "opus" ;;
+        fedora/pipewire) echo "pipewire" ;;
+        fedora/pyqt6) echo "python3-pyqt6" ;;
+        fedora/flatpak) echo "flatpak" ;;
+        debian/opus) echo "libopus0" ;;
+        debian/pipewire) echo "pipewire" ;;
+        debian/pyqt6) echo "python3-pyqt6" ;;
+        debian/flatpak) echo "flatpak" ;;
+        arch/opus) echo "opus" ;;
+        arch/pipewire) echo "pipewire" ;;
+        arch/pyqt6) echo "python-pyqt6" ;;
+        arch/flatpak) echo "flatpak" ;;
+        suse/opus) echo "libopus0" ;;
+        suse/pipewire) echo "pipewire" ;;
+        suse/pyqt6) echo "python3-qt6" ;;
+        suse/flatpak) echo "flatpak" ;;
+        *) echo "" ;;
+    esac
+}
+
+sysdep_install_cmd() {
+    # $1 = family, $@ = packages -> full install command (without sudo)
+    local fam="$1"; shift
+    case "$fam" in
+        fedora) echo "dnf install -y $*" ;;
+        debian) echo "apt-get update && apt-get install -y $*" ;;
+        arch) echo "pacman -S --noconfirm $*" ;;
+        suse) echo "zypper install -y $*" ;;
+        *) echo "" ;;
+    esac
+}
+
+sysdep_ensure() {
+    # $@ = items (opus|pipewire|pyqt6|flatpak). Checks each, installs the
+    # missing ones only with consent. Returns 0 when all present.
+    local missing_items=() pkgs=()
+    local fam
+    fam="$(sysdep_family)"
+    local item
+    for item in "$@"; do
+        case "$item" in
+            opus)
+                if ! ldconfig -p 2>/dev/null | grep -q "libopus.so.0"; then
+                    missing_items+=("opus (loader: libopus.so.0)")
+                    pkgs+=("$(sysdep_pkgs opus "$fam")")
+                fi
+                ;;
+            pipewire)
+                if ! command -v pw-cli >/dev/null 2>&1 \
+                    && [[ ! -S "${XDG_RUNTIME_DIR:-/run/user/$UID}/pipewire-0" ]]; then
+                    missing_items+=("pipewire (daemon for screen/audio capture)")
+                    pkgs+=("$(sysdep_pkgs pipewire "$fam")")
+                fi
+                ;;
+            pyqt6)
+                if ! python3 -c "import PyQt6" 2>/dev/null; then
+                    missing_items+=("PyQt6 (control GUI)")
+                    pkgs+=("$(sysdep_pkgs pyqt6 "$fam")")
+                fi
+                ;;
+            flatpak)
+                if ! command -v flatpak >/dev/null 2>&1; then
+                    missing_items+=("flatpak")
+                    pkgs+=("$(sysdep_pkgs flatpak "$fam")")
+                fi
+                ;;
+        esac
+    done
+    # Deduplicate packages, drop empties (unknown distro).
+    local uniq_list=""
+    local p
+    for p in ${pkgs[@]+"${pkgs[@]}"}; do
+        [[ -z "$p" ]] && continue
+        [[ " $uniq_list " == *" $p "* ]] || uniq_list+=" $p"
+    done
+    # shellcheck disable=SC2206
+    pkgs=($uniq_list)
+    [[ "${#missing_items[@]}" == "0" ]] && return 0
+
+    echo "missing system dependencies:"
+    for item in "${missing_items[@]}"; do echo "  - $item"; done
+    local cmd
+    cmd="$(sysdep_install_cmd "$fam" "${pkgs[@]}")"
+    if [[ -z "$cmd" ]]; then
+        echo "unknown distro (no /etc/os-release match) — install manually:" >&2
+        echo "  needed: ${uniq_list:- (see item list above)}" >&2
+        return 1
+    fi
+    local run_prefix=""
+    if [[ "${EUID:-$(id -u)}" != "0" ]]; then
+        command -v sudo >/dev/null 2>&1 \
+            || { echo "no sudo available — run manually:  sudo $cmd" >&2; return 1; }
+        run_prefix="sudo "
+    fi
+    if [[ "$SYSDEPS_OFF" == "1" ]]; then
+        echo "refusing package-manager changes (--no-sysdeps). Run manually:" >&2
+        echo "  ${run_prefix}$cmd" >&2
+        return 1
+    fi
+    if [[ "$SYSDEPS_YES" != "1" ]]; then
+        if [[ -t 0 ]]; then
+            local answer=""
+            echo "install now? [j/N]  (${run_prefix}$cmd)"
+            read -r answer </dev/tty || answer=""
+            case "$answer" in
+                j|J|y|Y|ja|yes) ;;
+                *) echo "skipped — run manually:  ${run_prefix}$cmd" >&2; return 1 ;;
+            esac
+        else
+            echo "non-interactive shell — re-run with --yes, or manually:" >&2
+            echo "  ${run_prefix}$cmd" >&2
+            return 1
+        fi
+    fi
+    echo "installing: ${run_prefix}$cmd"
+    # shellcheck disable=SC2086
+    ${run_prefix}$cmd || return 1
+    # Re-check after install — never assume success.
+    local retry=("$@")
+    local re_missing=0
+    for item in "${retry[@]}"; do
+        case "$item" in
+            opus) ldconfig -p 2>/dev/null | grep -q "libopus.so.0" || re_missing=1 ;;
+            pipewire) command -v pw-cli >/dev/null 2>&1 || re_missing=1 ;;
+            pyqt6) python3 -c "import PyQt6" 2>/dev/null || re_missing=1 ;;
+            flatpak) command -v flatpak >/dev/null 2>&1 || re_missing=1 ;;
+        esac
+    done
+    # PipeWire daemon may be installed but not running (fresh install
+    # without session) — that is a service state, not a missing package.
+    if [[ "$re_missing" == "1" ]]; then
+        echo "note: packages installed, but a re-check still fails." >&2
+        echo "PipeWire needs a running user session (re-login may be needed)" >&2
+    fi
+    return 0
+}
+
+# --- 2. install -------------------------------------------------------------
+if [[ "$MODE" == "flatpak" ]]; then
+    [[ -f com.toucha.Streamer.flatpak ]] || fail "bundle missing"
+    sysdep_ensure flatpak || fail "flatpak is required for --flatpak"
+    flatpak --user install -y --reinstall ./com.toucha.Streamer.flatpak \
+        || fail "flatpak install"
+    echo "installed: com.toucha.Streamer (user)"
+    echo
+    echo "Run headless:  flatpak run com.toucha.Streamer --source portal \\"
+    echo "                   --monitors 3 --audio system"
+    echo "Or GUI:        click TOUCHaDESKTOP in the start menu"
+    if [[ "$LAUNCH" == "1" ]]; then
+        echo "launching GUI ..."
+        exec flatpak run com.toucha.Streamer
+    fi
+else
+    [[ -f toucha-streamer ]] || fail "native binary missing"
+    # GUI ships either as source (.py, release tarball) or compiled
+    # (.pyc, git tree — no source on GitHub). Prefer source when both
+    # are present.
+    GUI_SRC=""
+    if [[ -f toucha_gui.py ]]; then
+        GUI_SRC="toucha_gui.py"
+    elif [[ -f toucha_gui.pyc ]]; then
+        GUI_SRC="toucha_gui.pyc"
+        python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 14) else 1)" 2>/dev/null \
+            || fail "compiled GUI needs Python 3.14+ (found $(python3 --version 2>&1)); use the Flatpak instead"
+    else
+        fail "GUI missing (need toucha_gui.py or toucha_gui.pyc)"
+    fi
+    [[ -f toucha_icon.png ]] || fail "GUI icon missing"
+    # Loader preflight: with lib/ on the search path only genuine system
+    # remainders may be unresolved — anything else means a broken set.
+    if command -v ldd >/dev/null 2>&1; then
+        _missing="$(LD_LIBRARY_PATH="$HERE/lib" ldd "$HERE/toucha-streamer" 2>/dev/null \
+            | grep "not found" || true)"
+        if [[ -n "$_missing" ]]; then
+            echo "loader still misses (with bundled lib/):" >&2
+            echo "$_missing" >&2
+            if echo "$_missing" | grep -q "libopus"; then
+                echo "libopus is a system remainder (not bundled by design)." >&2
+            else
+                fail "broken set: non-system libs unresolved (see above)"
+            fi
+        fi
+    fi
+    # Everything the streamer needs to run must be present afterwards:
+    # loader remainder (opus), capture service (pipewire), GUI (PyQt6).
+    sysdep_ensure opus pipewire pyqt6 \
+        || echo "WARNING: continuing without all system deps — the streamer/GUI may not start." >&2
+    # The release binaries are linked with RUNPATH=$ORIGIN/lib, so binary
+    # and bundled libs MUST share one directory — a copy in ~/.local/bin
+    # resolves $ORIGIN there and dies with "libavcodec.so.61 not found".
+    # Everything lands in DATA_DIR; ~/.local/bin gets symlinks only.
+    BIN_DIR="$HOME/.local/bin"
+    DATA_DIR="$HOME/.local/share/TOUCHaDESKTOP"
+    APP_DIR="$HOME/.local/share/applications"
+    ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
+    mkdir -p "$BIN_DIR" "$DATA_DIR" "$APP_DIR" "$ICON_DIR" "$DATA_DIR/lib"
+    install -m755 toucha-streamer "$DATA_DIR/toucha-streamer"
+    # Bundled runtime libs (ffmpeg set, x264, sdbus-c++, pipewire, ei,
+    # xkbcommon — no opus/av1 by design) for $ORIGIN/lib.
+    install -m644 lib/*.so.* "$DATA_DIR/lib/"
+    echo "installed: $DATA_DIR/lib ($(ls -1 lib | wc -l) file(s))"
+    # New-protocol host (optional set member, same rig note as above).
+    if [[ -f toucha-host ]]; then
+        install -m755 toucha-host "$DATA_DIR/toucha-host"
+        echo "installed: $DATA_DIR/toucha-host"
+    fi
+    # PATH entries are symlinks, never copies (see RUNPATH note above).
+    ln -sfn "$DATA_DIR/toucha-streamer" "$BIN_DIR/toucha-streamer"
+    echo "installed: $BIN_DIR/toucha-streamer (symlink -> \$DATA_DIR)"
+    if [[ -f toucha-host ]]; then
+        ln -sfn "$DATA_DIR/toucha-host" "$BIN_DIR/toucha-host"
+        echo "installed: $BIN_DIR/toucha-host (symlink -> \$DATA_DIR)"
+    fi
+    install -m644 "$GUI_SRC" "$DATA_DIR/$GUI_SRC"
+    install -m644 toucha_icon.png "$DATA_DIR/toucha_icon.png"
+    # Licence notices next to the binary. The Flatpak path already does this
+    # (flatpak/com.toucha.Streamer.yml:110-115 -> /app/share/licenses/), and
+    # the native path must match: GPL requires the licence to travel with
+    # the work, and MIT (MetaShare) requires its copyright + permission
+    # notice in every copy. Without this, a native install ships binaries
+    # with no attribution at all, even though SOURCE-OFFER.txt points here.
+    LIC_DIR="$DATA_DIR/licenses"
+    mkdir -p "$LIC_DIR"
+    n_lic=0
+    # Archive root first (NOTICE/LICENSE), then the licenses/ subdir the
+    # release ships. Paths from the source tree are also accepted so the
+    # installer works when run from a checkout instead of the archive.
+    for f in NOTICE LICENSE \
+             licenses/* \
+             docs/licenses/metashare-mit.txt \
+             docs/licenses/x264-gpl-2.0.txt \
+             docs/licenses/ffmpeg-license.md \
+             docs/licenses/svt-av1-PATENTS.md; do
+        if [[ -f "$f" ]]; then
+            install -m644 "$f" "$LIC_DIR/$(basename "$f")"
+            n_lic=$((n_lic + 1))
+        fi
+    done
+    echo "installed: $LIC_DIR ($n_lic file(s))"
+    # The GUI looks next to its own script first: point it at the binary.
+    ln -sfn "$DATA_DIR/toucha-streamer" "$DATA_DIR/TOUCHaDESKTOP"
+    echo "installed: $DATA_DIR/$GUI_SRC (+ icon)"
+    # Launcher on PATH so the menu entry and terminals share one command.
+    cat > "$BIN_DIR/toucha-gui" <<EOF
+#!/bin/sh
+# TOUCHaDESKTOP control GUI (native install, generated by install.sh).
+exec python3 "$DATA_DIR/$GUI_SRC" "\$@"
+EOF
+    chmod 755 "$BIN_DIR/toucha-gui"
+    echo "installed: $BIN_DIR/toucha-gui"
+    if python3 -c "import PyQt6" 2>/dev/null; then
+        echo "PyQt6: OK"
+    else
+        echo "WARNING: python3 has no PyQt6 — the GUI cannot start." >&2
+        echo "Re-run with --yes or install manually (see sysdeps above)." >&2
+    fi
+    # Start-menu entry (same name/icon as the Flatpak for familiarity).
+    cat > "$APP_DIR/com.toucha.Streamer.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=TOUCHaDESKTOP
+Comment=VR Multitouch for Linux — streamer control
+Exec=$BIN_DIR/toucha-gui
+Icon=com.toucha.Streamer
+Terminal=false
+Categories=Utility;AudioVideo;
+StartupNotify=true
+EOF
+    install -m644 toucha_icon.png \
+        "$ICON_DIR/com.toucha.Streamer.png"
+    echo "installed: $APP_DIR/com.toucha.Streamer.desktop"
+    command -v update-desktop-database >/dev/null 2>&1 && \
+        update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
+    command -v gtk-update-icon-cache >/dev/null 2>&1 && \
+        gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" \
+            >/dev/null 2>&1 || true
+    case ":$PATH:" in
+        *":$BIN_DIR:"*) ;;
+        *) echo "note: $BIN_DIR is not on your PATH — add it or run the full path" ;;
+    esac
+    echo "NOTE: the native set is self-contained (bundled libs under"
+    echo "$DATA_DIR/lib, no opus/av1); system remainder is libopus,"
+    echo "PipeWire/portal and PyQt6 (handled above). Otherwise --flatpak."
+    echo
+    echo "Run headless:  toucha-streamer --source portal --monitors 3 --audio system"
+    echo "Or GUI:        toucha-gui (or click TOUCHaDESKTOP in the start menu)"
+    if [[ "$LAUNCH" == "1" ]]; then
+        echo "launching GUI ..."
+        exec "$BIN_DIR/toucha-gui"
+    fi
 fi
 
-echo "TOUCHaDESKTOP installed."
-echo "Open TOUCHaDESKTOP from the start menu and press Start."
+echo
+echo "Next: compare the host fingerprint from the streamer log with the"
+echo "Quest Trust dialog (character by character), tap Trust once."

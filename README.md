@@ -1,10 +1,24 @@
-TOUCHaDESKTOP 0.2.9-beta — install
-===================================
+TOUCHa 1.5.1-beta — Linux host
+==============================
 
-You need: a Linux PC (Wayland) + the TOUCHa app from the Meta Horizon
-Store on your Quest. This download is the Linux host side only.
-The control GUI (dark grey, autumn buttons) shows its version in the title bar
-and next to the status.
+You need: a Linux PC (x86_64, Wayland) + a TOUCHa viewer (Quest app from
+the Meta Horizon Store, or the device app for phones/tablets — both are
+distributed separately, no viewer APK lives here). This download is the
+Linux host side only: streamer, control GUI, installer, runtime libs.
+
+What's in this folder
+---------------------
+  install.sh                   installer (native, or Flatpak)
+  toucha-streamer              the streamer, release build, stripped
+  toucha_gui.pyc               control GUI, compiled (needs Python 3.14+)
+  toucha_icon.png              GUI/start-menu icon
+  lib/                         bundled runtime libs (9 files: ffmpeg set,
+                               x264, sdbus-c++, pipewire, ei, xkbcommon —
+                               deliberately no opus/av1, see below)
+  com.toucha.Streamer.flatpak  Flatpak bundle (GUI included, sandboxed)
+  SHA256SUMS.txt / .asc        checksums, GPG-signed
+  toucha-release.gpg           public release key
+  LICENSE, COMMERCIAL-EULA.md, THIRD_PARTY_NOTICES.md
 
 1. Verify the download (public key included):
   gpg --import toucha-release.gpg
@@ -14,73 +28,58 @@ All files must report OK / good signature. Key fingerprint:
   DB7A 3F89 6919 DA51 825F 3C59 715A 9113 AF69 D487
 
 2. Install:
-   ./install.sh
-This adds TOUCHaDESKTOP to the start menu. No sudo needed.
-To remove it again: ./install.sh --uninstall
+   ./install.sh --verify-only     check only, install nothing
+   ./install.sh                   install (asks before touching system packages)
+   ./install.sh --yes             install without asking (scripts)
+   ./install.sh --no-sysdeps      never touch the package manager, only report
+   ./install.sh --launch          install and start the GUI
+   ./install.sh --flatpak         Flatpak instead of native install
+   ./install.sh --uninstall       remove a previous install first (on update)
+No root needed for the install itself. Missing system packages (libopus,
+PipeWire daemon, PyQt6) are installed only with your consent — never
+silently. Without consent the installer prints the exact commands.
 Note: the GUI ships compiled (toucha_gui.pyc) and needs Python 3.14+
 plus PyQt6; install.sh checks both and points at the Flatpak otherwise.
 
-3. Start: open TOUCHaDESKTOP from the start menu and press Start.
-No terminal, no flags needed. A splash screen appears for 3 seconds,
-then the control GUI opens. The streamer log lives in its own Log tab;
+3. Run headless (example):
+   toucha-streamer --source portal --monitors 3 \
+       --codec hevc --fps 30 --port 8778 --bitrate 7500 \
+       --audio system --audio-codec pcm --restore
+The portal asks once for screen sharing and remembers the token
+(--restore); without it the dialog returns every start.
+Or GUI: open TOUCHaDESKTOP from the start menu and press Start. No
+terminal, no flags needed. The streamer log lives in its own Log tab;
 the exact start command is shown under Advanced → Command.
 
 Alternative: Flatpak bundle (sandboxed, same GUI via start menu):
   flatpak --user install ./com.toucha.Streamer.flatpak
 Shared dependencies (KDE runtime + PyQt) come from Flathub automatically.
 
-4. Connect on the Quest: open TOUCHa, pick your PC, compare the
-SHA-256 fingerprint shown on the Quest with the one printed in the
-streamer log in the GUI, then tap Trust ONCE.
+4. Connect a viewer: open TOUCHa on the Quest (or the device app), pick
+your PC from the host list ("name (ip) — N monitors"). First connect
+shows a Trust dialog: compare the SHA-256 fingerprint character by
+character with the streamer log, then tap Trust ONCE. It is pinned
+from then on. Every monitor shows a real thumbnail — empty cards mean
+something is wrong, check the logs first.
 
-5. Pick a host on the Quest (host list):
-- The Welcome screen lists every TOUCHa host on your LAN as
-  "name (ip) — N monitors". Tap one to stream it.
-- First connect shows a Trust dialog: compare the SHA-256 fingerprint
-  with the streamer log, then tap Trust ONCE. It is pinned from then on.
-- Host key changed (reinstall)? Long-press the host row, tap Forget,
-  reconnect and trust the new fingerprint.
-- No host found? Check the streamer runs with discovery on (default),
-  then Rescan. Manual address also works: IP, port (default 8778),
-  monitors blank = all offered.
-- Behind Tor/VPN: enable the SOCKS proxy row (e.g. Orbot) before
-  connecting.
-- Speaker button (♪) mutes host audio on all windows; the toolbar host
-  button switches host per window (long-press = forget pin).
+System requirements
+-------------------
+  * PipeWire with a running session bus (screen/audio capture)
+  * libopus (loader remainder — installed on demand, see step 2)
+  * Python 3.14+ with PyQt6 (GUI only)
+  * OpenSSL, X11 (base system), x86_64 Linux
+Without the PipeWire daemon the streamer exits with a message (a fresh
+PipeWire install may need a re-login).
 
-0.2.9 changes: control GUI starts the streamer automatically (Autostart
-checkbox, on by default); Advanced command wraps instead of widening the
-window; window freely resizable; Quest audio routing follows headset presence
-(AUDIO 0/1); relative-mouse anchor reset (no more cursor jumps).
-
-0.2.8 changes: Flatpak audio fixed (host sound streams again without a
-system Opus library); Quest host list documented above.
-
-TOUCHa Host 0.1.0-beta (Android, beta) — TOUCHaHostV0.1.0.apk
-=============================================================
-Turns an Android phone/tablet into a TOUCHa streamer for the Quest:
-same Trust flow (compare the fingerprint on both screens, tap Trust
-ONCE), then the phone screen streams to the headset.
-
-Install: sideload the APK (or run it inside Waydroid on Linux) and open
-TOUCHa Host. Verify it like everything else here:
-  apksigner verify --print-certs TOUCHaHostV0.1.0.apk
-  (expect the TOUCHa Beta certificate) plus sha256sum -c SHA256SUMS.txt.
-
-How to use:
-- Tap Start, confirm the screen-capture consent. The status shows
-  "Waiting for viewer…", then "Connected".
-- On the Quest: manual host entry (auto-discovery stays on the LAN the
-  host actually lives in), Trust ONCE after comparing fingerprints.
-- Touch on the Quest arrives as gestures on the phone (touch-only, no
-  hardware keys without root — stated in the app as well).
-- BACK opens the launcher in a new window (stream keeps running);
-  ✕ closes. Passwords are never stored; host keys use TOFU pins like
-  the desktop streamer.
-
-Beta limits (honest): video only, no host audio yet; touch gestures
-only; screen-capture consent is asked on every start; RTCP feedback
-does not cross NAT setups (keyframe every 2 s covers it).
+New in 1.5.1
+------------
+  * Connect thumbnails work again (monitor/port miscalculation fixed).
+  * Audio stutter gone; latency ~300 ms down to ~160 ms; routing and
+    stuck-takeover bugs fixed. Sound is plain PCM (48 kHz stereo).
+  * Video: HEVC expected, H.264 fallback. Opus/AV1 removed.
+  * lib/ now carries PipeWire, libei, xkbcommon (9 files instead of 6).
+  * The installer resolves missing system packages itself — only with
+    consent (--yes or [j/N]), never silently.
 
 Licensing and commercial distribution
 ======================================
@@ -101,22 +100,6 @@ licence. That licence does not remove or restrict the rights granted by the
 MIT License or any other third-party licence. Third-party components remain
 under their respective licences and may require additional notices, source
 code, or relinking information.
-
-Experimental v1.2.0
--------------------
-
-The v1.2.0 experimental release is not a final commercial-licence clearance.
-It must not be advertised as containing only proprietary TOUCHa code until the
-complete source and binary dependency inventory has been reviewed. In
-particular, verify the exact licensing and build configuration for FFmpeg,
-Opus, Qt/PyQt6, PipeWire, GTK/gtkmm, SDL2, Android/Gradle components, and
-all other bundled or dynamically linked dependencies before selling or
-redistributing v1.2.0.
-
-Until that review is complete, v1.2.0 is provided for testing and evaluation.
-Every v1.2.0 package must retain the MetaShare MIT attribution and all
-applicable third-party notices. Do not apply a blanket "all rights reserved"
-notice to MetaShare-derived or other third-party code.
 
 This README is a project notice, not legal advice. Obtain a final review from
 a lawyer experienced in software and open-source licensing before commercial
